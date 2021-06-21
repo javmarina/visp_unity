@@ -70,16 +70,12 @@ static float m_detector_quad_decimate = 1.0; //!< Internal parameter associated 
 static int m_detector_nthreads = 1; //!< Internal parameter associated to AprilTag detector instance modified using Visp_DetectorAprilTag_Init().
 
 /*!
- * Global variables for vpMbGenericTracker
+ * Global variables for IBVS
  */
-typedef enum {
-  state_detection, //!< Tracker is in detection state until an AprilTag is detected. This state can also be reached when tracking fails.
-  state_tracking, //!< Tracker is in tracking state when AprilTag pose allows to initialize the tracker and when tracking succeed.
-} state_t;
-
-static vpMbGenericTracker m_tracker; //!< Internal generic based-model tracker instance initialized using Visp_MbGenericTracker_Init().
-static double m_projection_error_threshold = 40.; //!< Internal parameter associated to generic based-model tracker instance and updated using Visp_MbGenericTracker_Init().
-static state_t m_state = state_detection; //!< Internal generic based-model tracker state updated during tracking using Visp_MbGenericTracker_Process().
+static vpServo task;
+static vpHomogeneousMatrix cMo;
+static vpPoint point[4];
+static vpFeaturePoint p[4];
 
 void Visp_EnableDisplayForDebug(bool enable_display)
 {
@@ -126,208 +122,92 @@ void Visp_ImageUchar_SetFromColor32Array(unsigned char *bitmap, int height, int 
   }
 }
 
-void Visp_MbGenericTracker_SetFeatureType(int feature_type)
-{
-  if (feature_type == 0)
-    m_tracker.setTrackerType(vpMbGenericTracker::EDGE_TRACKER);
-#ifdef VISP_HAVE_OPENCV
-  else if (feature_type == 1)
-    m_tracker.setTrackerType(vpMbGenericTracker::EDGE_TRACKER | vpMbGenericTracker::KLT_TRACKER);
-#endif
-}
-
-void Visp_MbGenericTracker_SetMovingEdgesSettings(int range, double sample_step)
-{
-  vpMe me;
-  me.setMaskSize(5);
-  me.setMaskNumber(180);
-  me.setRange(static_cast<unsigned int>(range));
-  me.setThreshold(10000);
-  me.setMu1(0.5);
-  me.setMu2(0.5);
-  me.setSampleStep(sample_step);
-  m_tracker.setMovingEdge(me);
-}
-
-void Visp_MbGenericTracker_SetKeypointSettings(double quality, int mask_border)
-{
-  if (m_tracker.getTrackerType() & vpMbGenericTracker::KLT_TRACKER) {
-    vpKltOpencv klt_settings;
-    klt_settings.setMaxFeatures(300);
-    klt_settings.setWindowSize(5);
-    klt_settings.setQuality(quality);
-    klt_settings.setMinDistance(8);
-    klt_settings.setHarrisFreeParameter(0.01);
-    klt_settings.setBlockSize(3);
-    klt_settings.setPyramidLevels(3);
-    m_tracker.setKltOpencv(klt_settings);
-    m_tracker.setKltMaskBorder(static_cast<unsigned int>(mask_border));
-  }
-}
-
-void Visp_MbGenericTracker_Init(double angle_appear, double angle_disappear, double projection_error_threshold)
-{
-  m_projection_error_threshold = projection_error_threshold;
-  // camera calibration params
-  m_tracker.setCameraParameters(m_cam);
-
-  // model definition
-  m_tracker.loadModel("cube.cao");
-  m_tracker.setDisplayFeatures(m_debug_enable_display);
-  m_tracker.setAngleAppear(vpMath::rad(angle_appear));
-  m_tracker.setAngleDisappear(vpMath::rad(angle_disappear));
-  m_tracker.setProjectionErrorComputation(true);
-
-  m_state = state_detection;
-}
-
-bool Visp_MbGenericTracker_Process(double tag_size,
-                                  float *visible_edges_pointx, float *visible_edges_pointy, int *visible_edges_number,
-                                  float *cube_cMo, double *tracking_time)
-{
-  double t_start = vpTime::measureTimeMs();
-
-  vpHomogeneousMatrix cMo;
-
-  // If the image contains an aprilTag we pick the first one
-  unsigned int tag_id = 0;
-
-  if (m_debug_enable_display && m_debug_display_is_initialized) {
-    vpDisplay::display(m_I);
-  }
-
-  if (m_state == state_detection) {
-    std::vector<vpHomogeneousMatrix> cMo_vec;
-
-    // Detection
-    bool tag_detected = m_detector.detect(m_I, tag_size, m_cam, cMo_vec);
-    if (tag_detected && m_detector.getNbObjects() > 0) { // if tag detected, we pick the first one
-      cMo = cMo_vec[tag_id];
-      m_state = state_tracking;
-    }
-
-    // Initialize the tracker with the result of the detection
-    if (m_state == state_tracking) {
-      m_tracker.initFromPose(m_I, cMo);
-    }
-  }
-
-  if (m_state == state_tracking) {
-    try {
-      m_tracker.track(m_I);
-
-      m_tracker.getPose(cMo);
-
-      int visible_edges_counter = 0; // counter of the number of edges actually visible and currently tracked
-
-      // Get the lines currently tracked of the model
-      std::list<vpMbtDistanceLine *> edges;
-      m_tracker.getLline("Camera", edges, 0);
-      int i = 0;
-
-      //*nEdges = edges.size();
-      for (std::list<vpMbtDistanceLine *>::const_iterator it = edges.begin(); it != edges.end(); ++it) {
-
-        // Part of the functionality from the display() function is implemented from the following source:
-        // http://visp-doc.inria.fr/doxygen/visp-daily/vpMbtDistanceLine_8cpp_source.html
-        if ((*it)->isvisible && (*it)->isTracked()) {
-          visible_edges_counter ++; // increment count of number of edges that are visible and being tracked with visibility
-          vpPoint *P1 = (*it)->p1;
-          vpPoint *P2 = (*it)->p2;
-          P1->project(cMo);
-          P2->project(cMo);
-          vpImagePoint iP1, iP2;
-          vpMeterPixelConversion::convertPoint(m_cam, P1->get_x(), P1->get_y(), iP1);
-          vpMeterPixelConversion::convertPoint(m_cam, P2->get_x(), P2->get_y(), iP2);
-          visible_edges_pointx[i] = static_cast<float>(iP1.get_u());
-          visible_edges_pointy[i] = static_cast<float>(iP1.get_v());
-          i ++;
-          visible_edges_pointx[i] = static_cast<float>(iP2.get_u());
-          visible_edges_pointy[i] = static_cast<float>(iP2.get_v());
-          i ++;
-        }
-      }
-
-      // Update number of visible edges
-      *visible_edges_number = visible_edges_counter;
-
-      if (m_debug_enable_display && m_debug_display_is_initialized) {
-        m_tracker.display(m_I, cMo, m_cam, vpColor::red, 2);
-        vpDisplay::displayFrame(m_I, cMo, m_cam, tag_size / 2, vpColor::none, 3);
-      }
-
-      // Detect tracking error
-      double projection_error = m_tracker.computeCurrentProjectionError(m_I, cMo, m_cam);
-      if (m_debug_enable_display && m_debug_display_is_initialized) {
-        std::stringstream ss;
-        ss << "Projection error: " << projection_error << std::endl;
-        vpDisplay::displayText(m_I, 40, 20, ss.str(), vpColor::red);
-      }
-      if (projection_error > m_projection_error_threshold) {
-        m_state = state_detection;
-      }
-      else {
-        m_state = state_tracking;
-      }
-    }
-    catch (...) {
-      m_state = state_detection;
-    }
-  }
-
-  // Update output pose array
-  for (unsigned int i = 0; i < 16; i++) {
-    cube_cMo[i] = static_cast<float>(cMo.data[i]);
-  }
-  *tracking_time = vpTime::measureTimeMs() - t_start;
-
-  if (m_debug_enable_display && m_debug_display_is_initialized) {
-    std::stringstream ss;
-    ss << "Loop time: " << *tracking_time << std::endl;
-    vpDisplay::displayText(m_I, 20, 20, ss.str(), vpColor::red);
-    vpDisplay::flush(m_I);
-  }
-
-  return (m_state == state_tracking ? true : false);
-}
-
-void Visp_MbGenericTracker_CreateCaoFile(double cube_edge_size)
-{
-  std::ofstream fileStream;
-  fileStream.open("cube.cao", std::ofstream::out | std::ofstream::trunc);
-  fileStream << "V1\n";
-  fileStream << "# 3D Points\n";
-  fileStream << "8                  # Number of points\n";
-  fileStream <<  cube_edge_size / 2 << " " <<  cube_edge_size / 2 << " " << 0 << "    # Point 0: (X, Y, Z)\n";
-  fileStream <<  cube_edge_size / 2 << " " << -cube_edge_size / 2 << " " << 0 << "    # Point 1\n";
-  fileStream << -cube_edge_size / 2 << " " << -cube_edge_size / 2 << " " << 0 << "    # Point 2\n";
-  fileStream << -cube_edge_size / 2 << " " <<  cube_edge_size / 2 << " " << 0 << "    # Point 3\n";
-  fileStream << -cube_edge_size / 2 << " " <<  cube_edge_size / 2 << " " << -cube_edge_size << "    # Point 4\n";
-  fileStream << -cube_edge_size / 2 << " " << -cube_edge_size / 2 << " " << -cube_edge_size << "    # Point 5\n";
-  fileStream <<  cube_edge_size / 2 << " " << -cube_edge_size / 2 << " " << -cube_edge_size << "    # Point 6\n";
-  fileStream <<  cube_edge_size / 2 << " " <<  cube_edge_size / 2 << " " << -cube_edge_size << "    # Point 7\n";
-  fileStream << "# 3D Lines\n";
-  fileStream << "0                  # Number of lines\n";
-  fileStream << "# Faces from 3D lines\n";
-  fileStream << "0                  # Number of faces\n";
-  fileStream << "# Faces from 3D points\n";
-  fileStream << "6                  # Number of faces\n";
-  fileStream << "4 0 3 2 1          # Face 0: [number of points] [index of the 3D points]...\n";
-  fileStream << "4 1 2 5 6\n";
-  fileStream << "4 4 7 6 5\n";
-  fileStream << "4 0 7 4 3\n";
-  fileStream << "4 5 2 3 4\n";
-  fileStream << "4 0 1 6 7          # Face 5\n";
-  fileStream << "# 3D cylinders\n";
-  fileStream << "0                  # Number of cylinders\n";
-  fileStream << "# 3D circles\n";
-  fileStream << "0                  # Number of circles\n";
-  fileStream.close();
-}
-
 void Visp_CameraParameters_Init(double cam_px, double cam_py, double cam_u0, double cam_v0)
 {
   m_cam.initPersProjWithoutDistortion(cam_px, cam_py, cam_u0, cam_v0);
+}
+
+void Visp_IBVS_Init(float *desired_trans_quat, float *initial_trans_quat)
+{
+    // Desired camera position with respect to the object
+    vpQuaternionVector qd(desired_trans_quat[3], desired_trans_quat[4], desired_trans_quat[5], desired_trans_quat[6]);
+    vpTranslationVector td(desired_trans_quat[0], desired_trans_quat[1], desired_trans_quat[2]);
+    vpHomogeneousMatrix cdMo(td, qd);
+
+    // Initial camera position with respect to the object
+    vpQuaternionVector q(initial_trans_quat[3], initial_trans_quat[4], initial_trans_quat[5], initial_trans_quat[6]);
+    vpTranslationVector t(initial_trans_quat[0], initial_trans_quat[1], initial_trans_quat[2]);
+    cMo.insert(q);
+    cMo.insert(t);
+
+    // Then we define four 3D points that represent the corners of a 20cm by 20cm square.
+    point[0].setWorldCoordinates(-0.1, -0.1, 0);
+    point[1].setWorldCoordinates(0.1, -0.1, 0);
+    point[2].setWorldCoordinates(0.1, 0.1, 0);
+    point[3].setWorldCoordinates(-0.1, 0.1, 0);
+
+    // The instantiation of the visual servo task is done with the next lines
+    task.setServo(vpServo::EYEINHAND_CAMERA); // We initialize the task as an eye in hand visual servo. Resulting velocities computed by the controller are those that should be applied in the camera frame
+    task.setInteractionMatrixType(vpServo::CURRENT); // The interaction matrix will be computed from the current visual features. Thus they need to be updated at each iteration of the control loop
+    task.setLambda(0.5); // Finally, the constant gain lambda is set to 0.5
+
+    // It is now time to define four visual features as points in the image-plane.
+    // To this end we instantiate the vpFeaturePoint class.
+    // The current point feature "s" is implemented in p[i]. The desired point feature "s*" is implemented in pd[i].
+    vpFeaturePoint pd[4];
+
+    // Each feature is obtained by computing the position of the 3D points in the corresponding camera frame,
+    // and then by applying the perspective projection. Once current and desired features are created,
+    // they are added to the visual servo task.
+    for (unsigned int i = 0; i < 4; i++) {
+        point[i].track(cdMo);
+        vpFeatureBuilder::create(pd[i], point[i]);
+        point[i].track(cMo);
+        vpFeatureBuilder::create(p[i], point[i]);
+        task.addFeature(p[i], pd[i]);
+    }
+
+    // For the simulation we need first to create two homogeneous transformations wMc and wMo,
+    // respectively to define the position of the camera, and the position of the object in the world frame
+    // vpHomogeneousMatrix wMo;
+    /*vpHomogeneousMatrix wMc(wMc_trans_quat[0], wMc_trans_quat[1], wMc_trans_quat[2],
+                            wMc_trans_quat[3], wMc_trans_quat[4], wMc_trans_quat[5], wMc_trans_quat[6]);*/
+
+    // Secondly. we create an instance of our free flying camera. Here we also specify the sampling time to 0.040 seconds.
+    // When a velocity is applied to the camera, this time will be used by the exponential map to determine the next position of the camera.
+    // vpSimulatorCamera robot;
+    // robot.setSamplingTime(0.040);
+
+    // Finally, from the initial position wMc of the camera and the position of the object previously fixed in the
+    // camera frame cMo, we compute the position of the object in the world frame wMo. Since in our simulation the
+    // object is static, wMo will remain unchanged.
+    // robot.getPosition(wMc);
+    // wMo = wMc * cMo;
+}
+
+bool Visp_IBVS_Process(float *cMo_flat, float *velocity_skew)
+{
+    // velocity will be asisgned the computed vc
+
+    // Now we can enter in the visual servo loop. When a velocity is applied to our free flying camera,
+    // the position of the camera frame wMc will evolve wrt the world frame. From this position we compute
+    // the position of object in the new camera frame.
+    for (int i = 0; i < 16; i++) {
+        cMo.data[i] = cMo_flat[i];
+    }
+
+    // The current visual features are then updated by projecting the 3D points in the image-plane associated
+    // to the new camera location cMo.
+    for (unsigned int i = 0; i < 4; i++) {
+        point[i].track(cMo);
+        vpFeatureBuilder::create(p[i], point[i]);
+    }
+    // Finally, the velocity skew vc is computed.
+    vpColVector v = task.computeControlLaw();
+    for (int i = 0; i < 6; i++) {
+        velocity_skew[i] = static_cast<float>(v.data[i]);
+    }
+    return true;
 }
 
 void Visp_DetectorAprilTag_Init(float quad_decimate, int nthreads)
