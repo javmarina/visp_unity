@@ -55,7 +55,7 @@ if(APPLE)
   set(CMAKE_MACOSX_RPATH ON)
 endif()
 
-find_package(VISP REQUIRED visp_core visp_io visp_detection visp_mbt)
+find_package(VISP REQUIRED visp_core visp_io visp_detection visp_mbt visp_vs)
 
 include_directories(${VISP_INCLUDE_DIRS})
 
