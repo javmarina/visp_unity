@@ -43,7 +43,8 @@
 #include <visp3/io/vpImageIo.h>
 #include <visp3/blob/vpDot2.h>
 #include <visp3/detection/vpDetectorAprilTag.h>
-#include <visp3/visual_features/vpFeatureBuilder.h>
+#include <visp3/visual_features/vpFeatureThetaU.h>
+#include <visp3/visual_features/vpFeatureTranslation.h>
 #include <visp3/vs/vpServo.h>
 
 #include <iostream>
@@ -78,15 +79,6 @@ VISP_UNITY_EXPORT
 void Visp_WrapperFreeMemory();
 
 /*!
- * Set vpImage from Unity Color32 array image.
- * \param bitmap : Bitmap color 32 array that contains the color RGBA [height x width] image.
- * \param height : Image height.
- * \param width : Image width.
- */
-VISP_UNITY_EXPORT
-void Visp_ImageUchar_SetFromColor32Array(unsigned char *bitmap, int height, int width);
-
-/*!
  * Initialize camera parameters
  *
  * \param cam_px, cam_py : Intrinsic camera parameter corresponding to the ratio between the focal length of the lens
@@ -97,33 +89,40 @@ void Visp_ImageUchar_SetFromColor32Array(unsigned char *bitmap, int height, int 
 VISP_UNITY_EXPORT
 void Visp_CameraParameters_Init(double cam_px=600., double cam_py=600., double cam_u0=340., double cam_v0=240.);
 
-VISP_UNITY_EXPORT
-void Visp_IBVS_Init(float *desired_trans_quat, float *initial_trans_quat);
-
-VISP_UNITY_EXPORT
-bool Visp_IBVS_Process(float *cMo_flat, float *velocity_skew);
-
 /*!
- * Initialize AprilTag detector.
+ * Initialize.
  *
+ * \param tag_size : Tag size in [m]. This is the lenght of the black external shape of the tag.
+ * \param desired_trans_quat
+ * \param initial_trans_quat
  * \param quad_decimate : Detection of tags can be done on a lower-resolution image, improving speed
  * at a cost of pose accuracy and a slight decrease in detection rate. Decoding the binary payload
  * is still done at full resolution. Default is 1.0, increase this value to reduce the computation time.
  * \param nthreads : Set the number of threads for tag detection (default is 1).
  */
 VISP_UNITY_EXPORT
-void Visp_DetectorAprilTag_Init(float quad_decimate = 1.f, int nthreads = 1);
+int Visp_Init(double tag_size, float *desired_trans_quat, float *initial_trans_quat,
+              float quad_decimate = 1.f, int nthreads = 1);
 
 /*!
- * Detect and localize an AprilTag.
- *
- * \param tag_size : Tag size in [m]. This is the lenght of the black external shape of the tag.
+ * Process vpImage from Unity Color32 array image.
+ * \param bitmap : Bitmap color 32 array that contains the color RGBA [height x width] image.
+ * \param height : Image height.
+ * \param width : Image width.
+ * \param velocity_skew : used to store computed velocity
  * \param tag_cog : 2-dim array that contains tag center of gravity coordinates (u, v) along horizontal
  * and vertical axis respectively.
  * \param tag_length : 6-dim array that contains the length in pixel of the 4 tag sides and the length of the tag diagonal.
  * \param tag_cMo : 16-dim array corresponding to the tag pose as an [4 by 4] homogeneous matrix in row-major.
  * \param detection_time : Detection time in [ms].
  * \return true when a tag is detected, false otherwise.
+ */
+VISP_UNITY_EXPORT
+bool Visp_Process(unsigned char *bitmap, int height, int width, double *velocity_skew,
+                  float *tag_cog, float *tag_length, float *tag_cMo, double *detection_time);
+
+
+/*!
  *
  * The following pseudo-code shows how to use this function in an Unity project:
  *
@@ -145,9 +144,32 @@ void Visp_DetectorAprilTag_Init(float quad_decimate = 1.f, int nthreads = 1);
  * }
  * \endcode
  */
-VISP_UNITY_EXPORT
-bool Visp_DetectorAprilTag_Process(double tag_size, float *tag_cog, float *tag_length, float *tag_cMo,
-                                  double *detection_time);
+
+/*
+ * DEBUG
+ */
+//Create a callback delegate
+typedef void(*FuncCallBack)(const char* message, int color, int size);
+static FuncCallBack callbackInstance = nullptr;
+VISP_UNITY_EXPORT void RegisterDebugCallback(FuncCallBack cb);
 }
+
+//Color Enum
+enum class Color { Red, Green, Blue, Black, White, Yellow, Orange };
+
+class  Debug
+{
+public:
+    static void Log(const char* message, Color color = Color::Black);
+    static void Log(const std::string message, Color color = Color::Black);
+    static void Log(const int message, Color color = Color::Black);
+    static void Log(const char message, Color color = Color::Black);
+    static void Log(const float message, Color color = Color::Black);
+    static void Log(const double message, Color color = Color::Black);
+    static void Log(const bool message, Color color = Color::Black);
+
+private:
+    static void send_log(const std::stringstream &ss, const Color &color);
+};
 
 #endif
