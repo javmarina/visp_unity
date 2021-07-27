@@ -119,7 +119,8 @@ int Visp_Init(double tag_size, float *desired_trans_quat, float *initial_trans_q
  */
 VISP_UNITY_EXPORT
 bool Visp_Process(unsigned char *bitmap, int height, int width, double *velocity_skew,
-                  float *tag_cog, float *tag_length, float *tag_cMo, double *detection_time);
+                  float *tag_cog, float *tag_length, float *tag_cMo, double *detection_time,
+                  double *cd_t_c_out, double *cd_tu_c_out);
 
 
 /*!

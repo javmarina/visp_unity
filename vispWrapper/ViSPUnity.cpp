@@ -166,7 +166,8 @@ int Visp_Init(double tag_size, float *desired_trans_quat, float *initial_trans_q
  * \param width : Image width.
  */
 bool Visp_Process(unsigned char *bitmap, int height, int width, double *velocity_skew,
-                  float *tag_cog, float *tag_length, float *tag_cMo, double *detection_time) {
+                  float *tag_cog, float *tag_length, float *tag_cMo, double *detection_time,
+                  double *cd_t_c_out, double *cd_tu_c_out) {
     // 1. Copy image
     m_I.resize(static_cast<unsigned int>(height), static_cast<unsigned int>(width));
     vpImageConvert::RGBaToGrey(bitmap, m_I.bitmap, static_cast<unsigned int>(width * height));
@@ -249,10 +250,11 @@ bool Visp_Process(unsigned char *bitmap, int height, int width, double *velocity
                     }
                     t_init_servo = vpTime::measureTimeMs();
                 }
-                v_c = task.computeControlLaw((vpTime::measureTimeMs() - t_init_servo) / 1000.);
+                // TODO: v_c = task.computeControlLaw((vpTime::measureTimeMs() - t_init_servo) / 1000.);
             } else {
-                v_c = task.computeControlLaw();
+                // TODO: v_c = task.computeControlLaw();
             }
+			v_c = 0;
         } catch (const vpException& e) {
             Debug::Log(e.getStringMessage(), Color::Yellow);
             Debug::Log(e.getCode(), Color::Yellow);
@@ -275,6 +277,14 @@ bool Visp_Process(unsigned char *bitmap, int height, int width, double *velocity
         vpThetaUVector cd_tu_c = cdMc.getThetaUVector();
         double error_tr = sqrt(cd_t_c.sumSquare());
         double error_tu = vpMath::deg(sqrt(cd_tu_c.sumSquare()));
+
+        for (int i = 0; i < 3; i++) {
+            cd_t_c_out[i] = cd_t_c[i];
+        }
+
+        for (int i = 0; i < 3; i++) {
+            cd_tu_c_out[i] = cd_tu_c[i];
+        }
 
         if (error_tr < convergence_threshold_t && error_tu < convergence_threshold_tu) {
             has_converged = true;
